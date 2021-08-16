@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  annotations:
+  labels:
+    app: snapshot-operator
+  name: snapshot-operator
+  namespace: metacontroller
+spec:
+  podManagementPolicy: Parallel
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: snapshot-operator
+  serviceName: snapshot-operator
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: snapshot-operator
+    spec:
+      containers:
+      - command:
+        - /app/snapshot-operator
+        - --gcp-project=dfuseio-global
+        env:
+        - name: GOOGLE_APPLICATION_CREDENTIALS
+          value: /var/secrets/google/keyfile.json
+        image: gcr.io/eoscanada-shared-services/snapshot-operator:4acbffb
+        imagePullPolicy: IfNotPresent
+        name: snapshot
+        ports:
+        - containerPort: 9102
+          name: prometheus
+          protocol: TCP
+        resources:
+          limits:
+            cpu: "1"
+            memory: 500Mi
+          requests:
+            cpu: "100m"
+            memory: 300Mi
+        volumeMounts:
+        - mountPath: /var/secrets/google
+          name: google-cloud-key
+      serviceAccount: metacontroller
+      serviceAccountName: metacontroller
+      volumes:
+      - name: google-cloud-key
+        secret:
+          defaultMode: 420
+          secretName: keyfile-app-node-backup-writer

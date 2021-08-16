@@ -1,0 +1,4 @@
+.envrc
+/snapshotter
+/deploy/snapshot-operator
+.idea
