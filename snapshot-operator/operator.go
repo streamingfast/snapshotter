@@ -108,7 +108,7 @@ func (op *operator) oneRun(ctx context.Context) error {
 			zlog.Info("job changed", zap.String("job", job.Name), zap.String("type", string(ev.Type)))
 
 			if job.Status.Active == 0 && job.Status.Failed == 0 && job.Status.Succeeded != 0 {
-				if err := op.doDelete(ctx, job); err != nil {
+				if err := op.deleteAsync(ctx, job); err != nil {
 					zlog.Info("deleted following job success", zap.String("job", job.Name), zap.Error(err))
 				}
 			} else {
@@ -117,8 +117,8 @@ func (op *operator) oneRun(ctx context.Context) error {
 				}
 			}
 		case watch.Deleted:
-			if err := op.doDelete(ctx, job); err != nil {
-				zlog.Info("job deleted, deleted PVC", zap.String("job", job.Name), zap.Error(err))
+			if err := op.deleteAsync(ctx, job); err != nil {
+				zlog.Info("job deleted, but cannot delete pvc", zap.String("job", job.Name), zap.Error(err))
 			}
 		case watch.Bookmark:
 			zlog.Info("received Bookmark event for job name", zap.String("job", job.Name))
@@ -135,60 +135,52 @@ func (op *operator) oneRun(ctx context.Context) error {
 	return nil
 }
 
-func (op *operator) doDelete(ctx context.Context, job *batchv1.Job) error {
-	snapshotName, _, err := op.getAnnotations(job)
+func (op *operator) deleteAsync(ctx context.Context, job *batchv1.Job) error {
+	_, pvc, _, err := jobInfo(job)
 	if err != nil {
-		return nil
+		return err
 	}
 
-	pvcName, _ := diskNamesFromJob(job, snapshotName)
-
-	if op.isProcessing(snapshotName) {
-		go func() {
-			for {
-				if !op.isProcessing(snapshotName) {
-					op.deletePVC(ctx, job.Namespace, pvcName)
-				}
-				time.Sleep(3 * time.Second)
-			}
-		}()
-	}
-
-	op.deletePVC(ctx, job.Namespace, pvcName)
+	go func() {
+		for op.isProcessing(pvc) {
+			time.Sleep(3 * time.Second)
+			zlog.Info("deleteAsync: waiting to pvc creation before we delete it")
+		}
+		op.deletePVC(ctx, job.Namespace, pvc)
+	}()
 
 	return nil
 }
 
 func (op *operator) doCreate(ctx context.Context, job *batchv1.Job) error {
-	snapshotName, pdZone, err := op.getAnnotations(job)
+
+	snapshotName, pvc, pdZone, err := jobInfo(job)
 	if err != nil {
 		return nil
 	}
 
-	zlog.Info("creating disk and pvc/pv for job processing", zap.String("snapshot", snapshotName), zap.String("zone", pdZone))
+	zlog.Info("creating disk and pvc/pv for job processing", zap.String("snapshot", snapshotName), zap.String("pvc", pvc), zap.String("zone", pdZone))
 
-	if op.isProcessing(snapshotName) {
-		zlog.Info("already processing", zap.String("snapshot", snapshotName))
+	if op.isProcessing(pvc) {
+		zlog.Info("already processing", zap.String("pvc", pvc))
 		return nil
 	}
 
-	pvcName, pdName := diskNamesFromJob(job, snapshotName)
-
 	diskExists := true
 	// Check target disk
-	_, err = op.gcpClient.Disks.Get(op.gcpProject, pdZone, pdName).Do()
+	_, err = op.gcpClient.Disks.Get(op.gcpProject, pdZone, pvc).Do()
 	if err != nil {
 		if isNotFound(err) {
 			diskExists = false
 		} else {
-			zlog.Info("failed querying disk from gcp", zap.String("pd_name", pdName), zap.Error(err))
+			zlog.Info("failed querying disk from gcp", zap.String("pvc", pvc), zap.Error(err))
 			return nil
 		}
 	}
 
-	op.markProcessing(snapshotName)
+	op.markProcessing(pvc)
 
-	go op.createDisk(ctx, job, diskExists, snapshotName, pdZone, pvcName, pdName)
+	go op.createDisk(ctx, job, diskExists, snapshotName, pdZone, pvc, pvc)
 
 	return nil
 }
@@ -203,48 +195,32 @@ func (op *operator) deletePVC(ctx context.Context, namespace, pvcName string) {
 	}
 
 	if k8sErrors.IsNotFound(err) {
-		zlog.Info("pvc was already deleted, assuming successful completion")
+		zlog.Warn("pvc was already deleted, assuming successful completion")
 		return
 	}
 
 	if err != nil {
-		zlog.Error("couldn't delete PVC", zap.Error(err), zap.String("pvc_name", pvcName), zap.String("namespace", namespace))
+		zlog.Error("couldn't delete PVC, it will stay there", zap.Error(err), zap.String("pvc_name", pvcName), zap.String("namespace", namespace))
 	}
 }
 
-func (op *operator) markProcessing(snapshot string) {
-	op.snapshotsLocks.Store(snapshot, true)
+func (op *operator) markProcessing(pvcName string) {
+	op.snapshotsLocks.Store(pvcName, true)
 }
-func (op *operator) markDone(snapshot string) {
-	op.snapshotsLocks.Delete(snapshot)
+func (op *operator) markDone(pvcName string) {
+	op.snapshotsLocks.Delete(pvcName)
 }
-func (op *operator) isProcessing(snapshot string) bool {
-	_, ok := op.snapshotsLocks.Load(snapshot)
+func (op *operator) isProcessing(pvcName string) bool {
+	_, ok := op.snapshotsLocks.Load(pvcName)
 	return ok
-}
-
-func (op *operator) getAnnotations(job *batchv1.Job) (snapshotName, pdZone string, err error) {
-	snapshotName = job.Annotations["dfuse.io/snapshot-source"]
-	if snapshotName == "" {
-		zlog.Info("missing `dfuse.io/snapshot-source` annotation on job", zap.String("job", job.Name))
-		return "", "", errors.New("failed")
-	}
-
-	pdZone = job.Annotations["dfuse.io/snapshot-to-zone"]
-	if pdZone == "" {
-		zlog.Info("missing `dfuse.io/snapshot-to-zone` annotation on job", zap.String("job", job.Name))
-		return "", "", errors.New("failed")
-	}
-
-	return
 }
 
 func shouldUseSnapshotForDisk(snapshotName string) bool {
 	return !strings.HasSuffix(snapshotName, emptyDirSnapshotSuffix)
 }
 
-func (op *operator) createDisk(ctx context.Context, job *batchv1.Job, diskExists bool, snapshotName, pdZone, pvcName, pdName string) {
-	defer op.markDone(snapshotName)
+func (op *operator) createDisk(ctx context.Context, job *batchv1.Job, diskExists bool, snapshotName, pdZone, pvc, pdName string) {
+	defer op.markDone(pvc)
 
 	if !diskExists {
 		sourceSnapshot := ""
@@ -305,7 +281,7 @@ func (op *operator) createDisk(ctx context.Context, job *batchv1.Job, diskExists
 	_, err := op.k8sClient.CoreV1().PersistentVolumeClaims(job.Namespace).Create(ctx, &v1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: job.Namespace,
-			Name:      pvcName,
+			Name:      pvc,
 		},
 		Spec: v1.PersistentVolumeClaimSpec{
 			Resources: v1.ResourceRequirements{
@@ -314,7 +290,7 @@ func (op *operator) createDisk(ctx context.Context, job *batchv1.Job, diskExists
 				},
 			},
 			StorageClassName: S(""),
-			VolumeName:       pvcName,
+			VolumeName:       pvc,
 			AccessModes:      []v1.PersistentVolumeAccessMode{v1.ReadWriteOnce},
 		},
 	}, metav1.CreateOptions{})
@@ -323,9 +299,9 @@ func (op *operator) createDisk(ctx context.Context, job *batchv1.Job, diskExists
 		zlog.Error("creating PVC", zap.Error(err))
 		return
 	}
-	zlog.Info("pvc created", zap.String("pvc_name", pvcName))
+	zlog.Info("pvc created", zap.String("pvc", pvc))
 
-	pvName := pvcName
+	pvName := pvc
 	_, err = op.k8sClient.CoreV1().PersistentVolumes().Create(ctx, &v1.PersistentVolume{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: pvName,
@@ -351,7 +327,8 @@ func (op *operator) createDisk(ctx context.Context, job *batchv1.Job, diskExists
 	zlog.Info("pv created", zap.String("pv_name", pvName))
 }
 
-func diskNamesFromJob(job *batchv1.Job, snapshotName string) (pvcName, pdName string) {
+// the job's PVC name must include the snapshotname as substring (ex myjob-theSnapshotName)
+func pvcName(job *batchv1.Job, snapshotName string) (pvcName string) {
 	for _, vol := range job.Spec.Template.Spec.Volumes {
 		if vol.VolumeSource.PersistentVolumeClaim != nil {
 			jobClaimName := vol.VolumeSource.PersistentVolumeClaim.ClaimName
@@ -361,7 +338,31 @@ func diskNamesFromJob(job *batchv1.Job, snapshotName string) (pvcName, pdName st
 		}
 	}
 
-	return pvcName, pvcName
+	return
+}
+
+func jobInfo(job *batchv1.Job) (snapshotName, pvc, pdZone string, err error) {
+	snapshotName, pdZone, err = annotations(job)
+	if err != nil {
+		return
+	}
+	pvc = pvcName(job, snapshotName)
+	return
+}
+
+func annotations(job *batchv1.Job) (snapshotName, pdZone string, err error) {
+	snapshotName = job.Annotations["dfuse.io/snapshot-source"]
+	if snapshotName == "" {
+		zlog.Info("missing `dfuse.io/snapshot-source` annotation on job", zap.String("job", job.Name))
+		return "", "", errors.New("failed")
+	}
+
+	pdZone = job.Annotations["dfuse.io/snapshot-to-zone"]
+	if pdZone == "" {
+		zlog.Info("missing `dfuse.io/snapshot-to-zone` annotation on job", zap.String("job", job.Name))
+		return "", "", errors.New("failed")
+	}
+	return
 }
 
 func isNotFound(err error) bool {
