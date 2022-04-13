@@ -1,3 +1,8 @@
+## Description ##
+
+This library allows kubernetes pod on Google Cloud (*gke*), with proper permissions, to trigger a snapshot
+
+
 ## kubernetes permissions ##
 
 For each namespace:
@@ -14,7 +19,7 @@ For each namespace:
    subjects:
    - kind: ServiceAccount
      name: podreader
-     namespace: eos-dev1
+     namespace: ...
   ```
 
 2) create a role (in namespace) that gives GET to pods,pvc,pv:

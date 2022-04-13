@@ -193,12 +193,19 @@ func getPersistentDisk(ctx context.Context, pod, namespace, prefix string) (out 
 	labels := mypv.GetLabels()
 	zone, ok := labels["failure-domain.beta.kubernetes.io/zone"]
 	if !ok {
-		return nil, fmt.Errorf("cannot find zone for PV %s, no failure-domain.beta.kubernetes.io/zone label on PV", pvName)
+		zone, ok = labels["topology.kubernetes.io/zone"]
+	}
+	if !ok {
+		return nil, fmt.Errorf("cannot find zone for PV %s, no failure-domain.beta.kubernetes.io/zone or topology.kubernetes.io/zone label on PV", pvName)
 	}
 
 	region, ok := labels["failure-domain.beta.kubernetes.io/region"]
 	if !ok {
-		return nil, fmt.Errorf("cannot find region for PV %s, no failure-domain.beta.kubernetes.io/region label on PV", pvName)
+		region, ok = labels["topology.kubernetes.io/region"]
+	}
+
+	if !ok {
+		return nil, fmt.Errorf("cannot find region for PV %s, no failure-domain.beta.kubernetes.io/region or topology.kubernetes.io/region label on PV", pvName)
 	}
 
 	return &pdDef{name: mypv.Spec.GCEPersistentDisk.PDName, zone: zone, region: region}, nil
