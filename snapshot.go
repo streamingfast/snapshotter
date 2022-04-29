@@ -186,7 +186,7 @@ func getPersistentDisk(ctx context.Context, pod, namespace, prefix string) (out 
 		return nil, fmt.Errorf("getting pv %q: %s", pvName, err)
 	}
 
-	if mypv.Spec.GCEPersistentDisk == nil {
+	if mypv.Spec.GCEPersistentDisk == nil && mypv.Spec.CSI == nil {
 		return nil, fmt.Errorf("no gce persistent disk")
 	}
 
