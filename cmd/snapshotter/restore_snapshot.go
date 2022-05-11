@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/streamingfast/infra-priv/tools/cmd/sfinfra/gcloud"
-	"github.com/streamingfast/infra-priv/tools/cmd/sfinfra/kubectl"
+	"github.com/streamingfast/snapshotter/cmd/snapshotter/gcloud"
+	"github.com/streamingfast/snapshotter/cmd/snapshotter/kubectl"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
