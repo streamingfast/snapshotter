@@ -44,7 +44,7 @@ func (pv *PersistentVolume) MatchesApp(namespace string, appName string, mountNa
 		return false
 	}
 
-	if !strings.HasSuffix(claim, appName) {
+	if !strings.HasSuffix(claim, "-"+appName) {
 		return false
 	}
 
