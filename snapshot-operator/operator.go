@@ -231,7 +231,7 @@ func (op *operator) createDisk(ctx context.Context, job *batchv1.Job, diskExists
 				zlog.Error("failed getting required snapshot", zap.Error(err))
 				return
 			}
-			sizeInGb = snapshot.DiskSizeGb + 50 // TODO: this is hardcoded, deal with it
+			sizeInGb = snapshot.DiskSizeGb + 150 // TODO: this is hardcoded, deal with it
 
 			sourceSnapshot = snapshot.SelfLink
 		} else {
