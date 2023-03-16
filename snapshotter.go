@@ -13,12 +13,13 @@ type GKEPVCSnapshotter struct {
 	namespace string
 	pod       string
 	prefix    string
+	archive   bool
 }
 
-var gkeExampleConfigString = "type=gke-pvc-snapshot tag=v1 namespace=default project=mygcpproject prefix=datadir"
+var gkeExampleConfigString = "type=gke-pvc-snapshot tag=v1 namespace=default project=mygcpproject prefix=datadir archive=true"
 
 func NewGKEPVCSnapshotter(conf map[string]string) (*GKEPVCSnapshotter, error) {
-	for _, label := range []string{"tag", "project", "namespace", "prefix"} {
+	for _, label := range []string{"tag", "project", "namespace", "prefix", "archive"} {
 		if err := gkeCheckMissing(conf, label); err != nil {
 			return nil, err
 		}
@@ -29,6 +30,7 @@ func NewGKEPVCSnapshotter(conf map[string]string) (*GKEPVCSnapshotter, error) {
 		namespace: conf["namespace"],
 		pod:       os.Getenv("HOSTNAME"),
 		prefix:    conf["prefix"],
+		archive:   conf["archive"] == "true",
 	}, nil
 }
 
@@ -41,7 +43,7 @@ func (s *GKEPVCSnapshotter) Backup(lastSeenBlockNum uint32) (string, error) {
 	defer cancel()
 
 	snapshotName := GenerateName(s.namespace, s.tag, lastSeenBlockNum)
-	return snapshotName, TakeSnapshot(ctx, snapshotName, s.project, s.namespace, s.pod, s.prefix)
+	return snapshotName, TakeSnapshot(ctx, snapshotName, s.project, s.namespace, s.pod, s.prefix, s.archive)
 
 }
 

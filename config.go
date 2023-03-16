@@ -26,6 +26,7 @@ type Config struct {
 	project   string
 	namespace string
 	podName   string
+	archive   bool
 }
 
 func (c *Config) Valid() error {
@@ -55,6 +56,7 @@ func newConfig() *Config {
 		project:   os.Getenv("PROJECT"),
 		namespace: os.Getenv("NAMESPACE"),
 		podName:   os.Getenv("HOSTNAME"),
+		archive:   strings.ToUpper(os.Getenv("SNAPSHOT_TYPE")) == "ARCHIVE",
 	}
 	return c
 }

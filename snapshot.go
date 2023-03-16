@@ -85,10 +85,10 @@ func GenerateName(namespace, appNameVer string, lastSeenBlockNum uint32) string 
 }
 
 func TakeSnapshotFromEnv(ctx context.Context, snapshotName string) error {
-	return TakeSnapshot(ctx, snapshotName, EnvConfig.project, EnvConfig.namespace, EnvConfig.podName, "")
+	return TakeSnapshot(ctx, snapshotName, EnvConfig.project, EnvConfig.namespace, EnvConfig.podName, "", EnvConfig.archive)
 }
 
-func TakeSnapshot(ctx context.Context, snapshotName, project, namespace, pod, prefix string) error {
+func TakeSnapshot(ctx context.Context, snapshotName, project, namespace, pod, prefix string, archive bool) error {
 	pd, err := getPersistentDisk(ctx, pod, namespace, prefix)
 	if err != nil {
 		return fmt.Errorf("error getting persistent disk: %v", err)
@@ -101,14 +101,14 @@ func TakeSnapshot(ctx context.Context, snapshotName, project, namespace, pod, pr
 
 	time.Sleep(10 * time.Second)
 
-	err = createSnapshot(ctx, snapshotName, project, pd)
+	err = createSnapshot(ctx, snapshotName, project, pd, archive)
 
 	time.Sleep(10 * time.Second)
 
 	return err
 }
 
-func createSnapshot(ctx context.Context, snapshotName, project string, pd *pdDef) error {
+func createSnapshot(ctx context.Context, snapshotName, project string, pd *pdDef, archive bool) error {
 	service, err := compute.NewService(ctx)
 	if err != nil {
 		return err
@@ -120,6 +120,12 @@ func createSnapshot(ctx context.Context, snapshotName, project string, pd *pdDef
 		StorageLocations: []string{
 			pd.region,
 		},
+	}
+
+	if archive {
+		theSnapshot.SnapshotType = "ARCHIVE"
+	} else {
+		theSnapshot.SnapshotType = "STANDARD"
 	}
 
 	op, err := service.Disks.CreateSnapshot(project, pd.zone, pd.name, theSnapshot).Do()
